@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# Small CSS touch to get a bit closer to your Figma vibe
+# Small CSS touch to get closer to your Figma vibe
 st.markdown(
     """
     <style>
@@ -35,6 +35,26 @@ st.markdown(
         font-weight: 600;
         font-size: 1.2rem;
         margin-bottom: 0.5rem;
+    }
+    /* Panel styling */
+    .stApp {
+        background-color: #f9fafb;
+    }
+    .mapping-panel {
+        background-color: #ffffff;
+        padding: 1rem 1.25rem;
+        border-radius: 0.75rem;
+        border: 1px solid #e5e7eb;
+    }
+    .side-panel-title {
+        font-weight: 600;
+        font-size: 1rem;
+        margin-bottom: 0.25rem;
+    }
+    .side-panel-subtitle {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 0.75rem;
     }
     </style>
     """,
@@ -133,7 +153,6 @@ VARIABLES_CATALOGUE = [
 
 CATALOGUE_DF = pd.DataFrame(VARIABLES_CATALOGUE)
 
-
 # -----------------------------------------------------------------------------
 # Session-state helpers
 # -----------------------------------------------------------------------------
@@ -160,7 +179,6 @@ def init_state():
                 "Status",
             ]
         )
-
 
 init_state()
 
@@ -189,7 +207,7 @@ def filter_catalogue_by_sources():
     elif pdms and not epic:
         return df[df["pdms_id"] != ""]
     else:
-        # nothing selected -> show everything (or nothing; I choose everything)
+        # nothing selected -> show everything
         return df
 
 
@@ -199,8 +217,8 @@ def filter_catalogue_by_sources():
 screen_titles = {
     1: "Variable Mapping Setup",
     2: "Select Data Source",
-    3: "Choose Variables",
-    4: "Show & Export Selected Variables",
+    3: "Map Variables",
+    4: "Review & Export",
 }
 
 st.markdown(
@@ -213,14 +231,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Back/Next buttons in the navbar right side
+# Back button in the navbar right side
 nav_cols = st.columns([8, 2, 2])
 with nav_cols[1]:
     if st.session_state.step > 1:
-        if st.button("◀ Back", use_container_width=True):
+        if st.button("◀ Back", use_container_width=True, key="back_button"):
             go_back()
 with nav_cols[2]:
-    # We will enable/disable inside each step (here button is just a placeholder)
+    # real "Next" buttons are inside each step, so nothing here
     pass
 
 st.write("")  # small spacer
@@ -229,7 +247,10 @@ st.write("")  # small spacer
 # STEP 1 – Setup
 # -----------------------------------------------------------------------------
 if st.session_state.step == 1:
-    st.markdown('<div class="step-title">Variable Mapping Setup</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="step-title">Variable Mapping Setup</div>',
+        unsafe_allow_html=True,
+    )
     st.write(
         "Welcome! Choose whether you want to start a new mapping or load an existing CSV configuration."
     )
@@ -241,7 +262,6 @@ if st.session_state.step == 1:
     )
     st.session_state.project_type = project_type
 
-    uploaded_file = None
     if project_type == "Load existing configuration":
         st.markdown("#### Upload configuration CSV")
         uploaded_file = st.file_uploader(
@@ -251,24 +271,25 @@ if st.session_state.step == 1:
 
         if uploaded_file is not None:
             try:
-                # Very simple CSV reader; assumes a header row
                 config_df = pd.read_csv(uploaded_file)
                 st.session_state.imported_config = config_df
                 st.success(f"Loaded {len(config_df)} rows from `{uploaded_file.name}`.")
                 st.dataframe(config_df.head(), use_container_width=True)
             except Exception as e:
                 st.error(f"Could not read CSV: {e}")
-
         else:
             st.info("Upload a CSV file to proceed.")
 
     st.write("---")
     can_next = True
-    if project_type == "Load existing configuration" and st.session_state.imported_config is None:
+    if (
+        project_type == "Load existing configuration"
+        and st.session_state.imported_config is None
+    ):
         can_next = False
 
-    if st.button("Next ▶", disabled=not can_next):
-        # Optional: pre-select variables based on imported config by name
+    if st.button("Next ▶", key="next_step1", disabled=not can_next):
+        # If config loaded, pre-select variables by name
         if st.session_state.imported_config is not None:
             imported_names = {
                 str(v).strip().lower()
@@ -285,7 +306,10 @@ if st.session_state.step == 1:
 # STEP 2 – Data Source Selection
 # -----------------------------------------------------------------------------
 elif st.session_state.step == 2:
-    st.markdown('<div class="step-title">Select Data Source</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="step-title">Select Data Source</div>',
+        unsafe_allow_html=True,
+    )
     st.write("Choose which data sources you want to include in your mapping.")
 
     col1, col2 = st.columns(2)
@@ -304,92 +328,113 @@ elif st.session_state.step == 2:
         "PDMS": pdms_checked,
     }
 
-    st.info("You can select one or both. This will filter which variables appear in the next step.")
+    st.info(
+        "You can select one or both. This will filter which variables appear in the mapping step."
+    )
 
     st.write("---")
     can_next = epic_checked or pdms_checked
-    if st.button("Next ▶", disabled=not can_next):
+    if st.button("Next ▶", key="next_step2", disabled=not can_next):
         go_next()
 
 # -----------------------------------------------------------------------------
-# STEP 3 – Choose Variables
+# STEP 3 – Map Variables (tree-like structure)
 # -----------------------------------------------------------------------------
 elif st.session_state.step == 3:
-    st.markdown('<div class="step-title">Choose Variables</div>', unsafe_allow_html=True)
-
-    # Filters
-    filt_col1, filt_col2 = st.columns([2, 3])
-    with filt_col1:
-        organ_system_filter = st.selectbox(
-            "Organ system filter",
-            ["All systems", "Cardiology", "Respiratory", "Neurology"],
-            index=0,
-        )
-    with filt_col2:
-        search_query = st.text_input("Search variables")
+    st.markdown(
+        '<div class="step-title">Map Variables</div>',
+        unsafe_allow_html=True,
+    )
 
     df = filter_catalogue_by_sources()
 
-    if organ_system_filter != "All systems":
-        df = df[df["organ_system"] == organ_system_filter]
+    left_col, right_col = st.columns([2.2, 3])
 
-    if search_query.strip():
-        q = search_query.strip().lower()
-        df = df[df["name"].str.lower().str.contains(q)]
-
-    # Map option labels to IDs
-    def make_label(row):
-        src_parts = []
-        if row["epic_id"]:
-            src_parts.append("EPIC")
-        if row["pdms_id"]:
-            src_parts.append("PDMS")
-        src = "/".join(src_parts) if src_parts else "–"
-        return f"{row['organ_system']} · {row['group']} · {row['name']} [{src}]"
-
-    df = df.copy()
-    df["label"] = df.apply(make_label, axis=1)
-
-    id_to_label = dict(zip(df["id"], df["label"]))
-    label_to_id = {v: k for k, v in id_to_label.items()}
-
-    # figure out which labels are currently selected
-    current_ids = st.session_state.selected_variable_ids
-    current_labels = [id_to_label[i] for i in current_ids if i in id_to_label]
-
-    selected_labels = st.multiselect(
-        "Available variables",
-        options=df["label"].tolist(),
-        default=current_labels,
-        help="Select variables to include in your mapping.",
-    )
-
-    # update session_state
-    new_ids = {label_to_id[lbl] for lbl in selected_labels}
-    st.session_state.selected_variable_ids = new_ids
-
-    st.write("### Selected variables preview")
-    if new_ids:
-        selected_df = CATALOGUE_DF[CATALOGUE_DF["id"].isin(new_ids)].copy()
-        st.dataframe(
-            selected_df[
-                ["name", "epic_id", "pdms_id", "organ_system", "group", "unit"]
-            ],
-            use_container_width=True,
+    # LEFT: "Tree" of organ system -> group -> variables with checkboxes
+    with left_col:
+        st.markdown('<div class="mapping-panel">', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-panel-title">Variable catalogue</div>',
+            unsafe_allow_html=True,
         )
-    else:
-        st.info("No variables selected yet.")
+        st.markdown(
+            '<div class="side-panel-subtitle">Browse by organ system & group. Tick variables to add them to your mapping.</div>',
+            unsafe_allow_html=True,
+        )
+
+        organ_systems = sorted(df["organ_system"].unique())
+
+        for os in organ_systems:
+            with st.expander(os, expanded=True):
+                os_df = df[df["organ_system"] == os]
+                groups = sorted(os_df["group"].unique())
+                for grp in groups:
+                    st.markdown(f"**{grp}**")
+                    grp_df = os_df[os_df["group"] == grp]
+
+                    for _, row in grp_df.iterrows():
+                        src_parts = []
+                        if row["epic_id"]:
+                            src_parts.append("EPIC")
+                        if row["pdms_id"]:
+                            src_parts.append("PDMS")
+                        src_label = "/".join(src_parts) if src_parts else "–"
+
+                        key = f"var_{row['id']}"
+                        default_checked = row["id"] in st.session_state.selected_variable_ids
+                        st.checkbox(
+                            f"{row['name']}  ·  {row['unit']}  [{src_label}]",
+                            value=default_checked,
+                            key=key,
+                        )
+                    st.write("")  # small space between groups
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # After rendering all checkboxes, recompute selected IDs from their states
+    selected_ids = {
+        row["id"]
+        for _, row in df.iterrows()
+        if st.session_state.get(f"var_{row['id']}", False)
+    }
+    st.session_state.selected_variable_ids = selected_ids
+
+    # RIGHT: Selected variables preview
+    with right_col:
+        st.markdown('<div class="mapping-panel">', unsafe_allow_html=True)
+        st.markdown("#### Selected variables", unsafe_allow_html=True)
+
+        if selected_ids:
+            selected_df = CATALOGUE_DF[CATALOGUE_DF["id"].isin(selected_ids)].copy()
+            selected_df_display = selected_df[
+                ["name", "epic_id", "pdms_id", "organ_system", "group", "unit"]
+            ].rename(
+                columns={
+                    "name": "Variable",
+                    "epic_id": "EPIC ID",
+                    "pdms_id": "PDMS ID",
+                    "organ_system": "Organ system",
+                    "group": "Group",
+                    "unit": "Unit",
+                }
+            )
+            st.dataframe(selected_df_display, use_container_width=True, height=420)
+            st.caption(f"{len(selected_ids)} variable(s) selected.")
+        else:
+            st.info("Tick variables on the left to include them in your mapping.")
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.write("---")
-    can_next = len(new_ids) > 0
-    if st.button("Next ▶", disabled=not can_next):
+    can_next = len(selected_ids) > 0
+    if st.button("Next ▶", key="next_step3", disabled=not can_next):
         # Build export table (initial) from catalogue
         rows = []
-        for vid in new_ids:
+        for vid in selected_ids:
             row = CATALOGUE_DF[CATALOGUE_DF["id"] == vid].iloc[0]
-            # Determine source string
             has_epic = bool(row["epic_id"])
             has_pdms = bool(row["pdms_id"])
+
             if has_epic and has_pdms:
                 source = "Both"
                 id_code = f"{row['epic_id']} / {row['pdms_id']}"
@@ -419,11 +464,11 @@ elif st.session_state.step == 3:
         go_next()
 
 # -----------------------------------------------------------------------------
-# STEP 4 – Show & Export Selected Variables
+# STEP 4 – Review & Export
 # -----------------------------------------------------------------------------
 elif st.session_state.step == 4:
     st.markdown(
-        '<div class="step-title">Show & Export Selected Variables</div>',
+        '<div class="step-title">Review & Export</div>',
         unsafe_allow_html=True,
     )
 
@@ -451,7 +496,17 @@ elif st.session_state.step == 4:
         with c4:
             unit = st.selectbox(
                 "Unit",
-                ["bpm", "mmHg", "L/min", "%", "breaths/min", "score", "mg/dL", "°C", "custom"],
+                [
+                    "bpm",
+                    "mmHg",
+                    "L/min",
+                    "%",
+                    "breaths/min",
+                    "score",
+                    "mg/dL",
+                    "°C",
+                    "custom",
+                ],
                 index=0,
             )
 
@@ -492,7 +547,9 @@ elif st.session_state.step == 4:
             options=df["Variable"].tolist(),
         )
         if st.button("Delete selected", disabled=not to_delete):
-            st.session_state.export_table = df[~df["Variable"].isin(to_delete)].reset_index(drop=True)
+            st.session_state.export_table = df[
+                ~df["Variable"].isin(to_delete)
+            ].reset_index(drop=True)
             st.success(f"Deleted {len(to_delete)} variable(s).")
 
     st.write("---")
